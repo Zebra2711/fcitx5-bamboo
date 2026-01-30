@@ -2,9 +2,16 @@
 set( fcitx_bamboo_sources
     bamboo.cpp
 )
-
+find_package(ICU REQUIRED COMPONENTS uc i18n)
 add_fcitx5_addon(bamboo ${fcitx_bamboo_sources})
-target_link_libraries(bamboo Fcitx5::Core Fcitx5::Config Bamboo::Core Pthread::Pthread)
+target_link_libraries(bamboo
+  Fcitx5::Core
+  Fcitx5::Config
+  Bamboo::Core
+  Pthread::Pthread
+  ICU::uc
+  ICU::i18n
+)
 target_include_directories(bamboo PRIVATE ${PROJECT_BINARY_DIR})
 install(TARGETS bamboo DESTINATION "${CMAKE_INSTALL_LIBDIR}/fcitx5")
 fcitx5_translate_desktop_file(bamboo.conf.in bamboo.conf)

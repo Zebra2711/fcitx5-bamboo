@@ -44,6 +44,11 @@
 #include <utility>
 #include <vector>
 
+#include <unicode/unistr.h>
+#include <unicode/uchar.h>
+#include <unicode/locid.h>
+#include <set>
+
 namespace fcitx {
 
 namespace {
@@ -54,6 +59,108 @@ constexpr std::string_view CharsetActionPrefix = "bamboo-charset-";
 const std::string CustomKeymapFile = "conf/bamboo-custom-keymap.conf";
 
 FCITX_DEFINE_LOG_CATEGORY(bamboo, "bamboo");
+
+/**
+ * Vấn đề là với các cụm nguyên âm trong từ có thanh ngang
+ * k thể biết lúc nào nên commit đc
+ **/
+const std::vector<std::string> AUTO_COMMIT_ENDINGS = {
+    "ài", "ái", "ãi", "ải", "ại", "ào", "áo", "ão",
+    "ảo", "ạo", "àu", "áu", "ãu", "ủa", "ạu", "ày",
+    "áy", "ãy", "ảy", "ạy", "à", "á", "ã", "ả",
+    "ạ", "èo", "éo", "ẽo", "ẻo", "ẹo", "è", "é",
+    "ẽ", "ẻ", "ẹ", "ià", "iá","ía", "iã", "iả", "iạ",
+    "ìu", "íu", "ĩu", "ỉu", "ịu", "iề", "iều", "iế",
+    "iếu", "iễ", "iễu", "iể", "iểu", "iệ", "iệu", "ì",
+    "í", "ĩ", "ỉ", "ị", "oà", "oài", "oào", "oày",
+    "óa", "oái", "oáo", "oáy", "oã", "oãi", "oão", "oãy",
+    "oả", "oải", "oảo", "oảy", "oạ", "oại", "oạo", "oạy",
+    "oè", "oèo", "oé", "oéo", "oẽ", "oẽo", "oẻ", "oẻo",
+    "oẹ", "oẹo", "oì", "oí", "oĩ", "oỉ", "oị", "oò",
+    "oó", "oõ", "oỏ", "oọ", "oằ", "oắ", "oẵ", "oẳ",
+    "oặ", "ò", "ó", "õ", "ỏ", "ọ", "uà", "uào",
+    "uá", "uáo", "uã", "uão", "uả", "uảo", "uạ", "uạo",
+    "uè", "ué", "uẽ", "uẻ", "uẹ",
+    "uế", "uệ", "uề", "uể", "ụê", "uê"
+    "uì", "uí", "uĩ",
+    "uỉ", "uị", "uò", "uó", "uõ", "uỏ", "uọ", "uyù",
+    "uyú", "uyũ", "uỷu", "uỵu", "uyề", "uyế", "uyễ", "uyể",
+    "uyệ","uyệ", "uỳ", "uý", "uỹ", "uỷ", "uỵ", "uầ", "uầy",
+    "uấ", "uấy", "uẫ", "uẫy", "uẩ", "uẩy", "uậ", "uậy",
+    "uồi", "uối", "uỗi", "uổi", "uội", "uằ", "uắ", "uẵ",
+    "uẳ", "uặ", "uờ", "uớ", "uỡ", "uở", "uợ", "ù",
+    "ú", "ũ", "ủ", "ụ", "yề", "yều", "yế", "yếu",
+    "yễ", "yễu", "yể", "yểu", "yệ", "yệu", "ỳ", "ý",
+    "ỹ", "ỷ", "ỵ", "ầu", "ấu", "ẫu", "ẩu", "ậu",
+    "ầy", "ấy", "ẫy", "ẩy", "ậy", "ầ", "ấ", "ẫ",
+    "ẩ", "ậ", "ều", "ếu", "ễu", "ểu", "ệu", "ề",
+    "ế", "ễ", "ể", "ệ",
+    "ồ", "ố", "ỗ", "ổ", "ộ",
+    "ồi", "ối", "ổi", "ội", "ỗi",
+    "ằ", "ắ",
+    "ẵ", "ẳ", "ặ", "ời", "ới", "ỡi", "ởi", "ợi",
+    "ờ", "ớ", "ỡ", "ở", "ợ", "ừi", "ứi", "ữi",
+    "ửi", "ựu", "ừu", "ứu", "ưũ", "ửu", "ựu", "ườ",
+    "ười", "ườu", "ướ", "ưới", "ướu", "ưỡ", "ưỡi", "ưỡu",
+    "ưở", "ưởi", "ưởu", "ượ", "ượi", "ượu", "ừ", "ứ",
+    "ữ", "ử", "ự"
+};
+
+const std::set<std::string> FINAL_CONSONANTS = {
+    "c", "ch", "m", "n", "ng", "nh", "p", "t"
+};
+
+std::string stripFinalConsonant(const std::string& text) {
+    if (text.empty()) {
+        return text;
+    }
+
+    // Check for two-character consonants first (ch, ng, nh)
+    if (text.length() >= 2) {
+        std::string last2 = text.substr(text.length() - 2);
+        if (last2 == "ch" || last2 == "ng" || last2 == "nh") {
+            return text.substr(0, text.length() - 2);
+        }
+    }
+
+    // Check for single-character consonants
+    if (text.length() >= 1) {
+        std::string last1 = text.substr(text.length() - 1);
+        if (last1 == "c" || last1 == "m" || last1 == "n" ||
+            last1 == "p" || last1 == "t") {
+            return text.substr(0, text.length() - 1);
+        }
+    }
+
+    return text;
+}
+
+bool shouldAutoCommit(const std::string& preedit) {
+    if (preedit.empty()) {
+        return false;
+    }
+
+    icu::UnicodeString ustr = icu::UnicodeString::fromUTF8(preedit);
+    ustr.toLower(icu::Locale("vi_VN"));
+
+    std::string lowerPreedit;
+    ustr.toUTF8String(lowerPreedit);
+
+    // std::string lowerPreedit = preedit;
+    // std::transform(lowerPreedit.begin(), lowerPreedit.end(), lowerPreedit.begin(), ::tolower);
+
+    std::string strippedPreedit = stripFinalConsonant(lowerPreedit);
+    size_t checkLength = std::min(strippedPreedit.length(), size_t(6));
+    std::string ending = strippedPreedit.substr(strippedPreedit.length() - checkLength);
+
+    for (const auto& pattern : AUTO_COMMIT_ENDINGS) {
+        if (ending.ends_with(pattern)) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 std::string macroFile(std::string_view imName) {
     return stringutils::concat("conf/bamboo-macro-", imName, ".conf");
@@ -170,6 +277,17 @@ public:
         UniqueCPtr<char> preedit(EnginePullPreedit(bambooEngine_.handle()));
         if (preedit && preedit.get()[0]) {
             std::string_view preeditView = preedit.get();
+            std::string preeditStr(preeditView);
+            // Check if preedit should be auto-committed
+            if (shouldAutoCommit(preeditStr)) {
+                // Commit the preedit string automatically
+                ic_->commitString(preeditStr);
+                // Reset the engine to clear the preedit
+                ResetEngine(bambooEngine_.handle());
+                ic_->updatePreedit();
+                ic_->updateUserInterface(UserInterfaceComponent::InputPanel);
+                return;
+            }
             Text text;
             TextFormatFlags format;
             if (ic_->capabilityFlags().test(CapabilityFlag::Preedit) &&
